@@ -1,0 +1,6 @@
+{
+  "name": "SOC Sentinel L2 - Incident Response & Analysis Studio",
+  "description": "Plataforma de análise e resposta a incidentes para analistas SOC Nível 2 com mapeamento MITRE ATT&CK, extração de IOCs, plano de ação e triage de logs.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
