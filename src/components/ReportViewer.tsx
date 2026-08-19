@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { IncidentAnalysisRecord, ActionItem, IncidentStatus } from "../types";
-import { exportIncidentIocsCsv, exportIncidentJson } from "../lib/exporters";
+import { exportIncidentIocsCsv, exportIncidentJson, exportIncidentPdf } from "../lib/exporters";
 import {
   ShieldAlert,
   AlertTriangle,
@@ -22,6 +22,7 @@ import {
   Table2,
   BadgeCheck,
   BadgeAlert,
+  Printer,
 } from "lucide-react";
 
 interface ReportViewerProps {
@@ -32,14 +33,12 @@ interface ReportViewerProps {
 }
 
 const INCIDENT_STATUSES: IncidentStatus[] = ["Novo", "Triagem", "Investigando", "Contido", "Erradicado", "Recuperado", "Fechado"];
-
 type Tab = "report" | "iocs" | "mitre" | "checklist";
 
 export const ReportViewer: React.FC<ReportViewerProps> = ({ record, onUpdateRecord, onOpenTicketModal, onNewIncident }) => {
   const [activeTab, setActiveTab] = useState<Tab>("report");
   const [copied, setCopied] = useState(false);
   const [copiedIoc, setCopiedIoc] = useState<string | null>(null);
-
   const actions = record.actions || record.parsedData.immediateActions;
   const completedCount = actions.filter((a) => a.completed).length;
   const completionPercent = actions.length ? Math.round((completedCount / actions.length) * 100) : 0;
@@ -81,7 +80,6 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ record, onUpdateReco
     P3: { bg: "bg-amber-950/90", text: "text-amber-400", border: "border-amber-600" },
     P4: { bg: "bg-emerald-950/90", text: "text-emerald-400", border: "border-emerald-600" },
   };
-
   const prioCfg = priorityColorMap[record.parsedData.priority] || priorityColorMap.P2;
 
   const renderFormattedMarkdown = (markdown: string) => {
@@ -94,7 +92,6 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ record, onUpdateReco
           const matchHeader = trimmed.match(/^##\s+([^\n]+)/);
           const headerTitle = matchHeader ? matchHeader[1].trim() : "";
           const bodyText = matchHeader ? trimmed.replace(/^##\s+[^\n]+\n/, "").trim() : trimmed;
-
           let headerIcon = <FileText className="w-5 h-5 text-cyan-400" />;
           let headerBg = "bg-slate-900 border-slate-800";
           const lower = headerTitle.toLowerCase();
@@ -153,6 +150,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ record, onUpdateReco
           <div className="flex flex-wrap items-center gap-2.5">
             <button onClick={handleCopyMarkdown} className="tool-btn">{copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-cyan-400" />}<span>{copied ? "Copiado!" : "Markdown"}</span></button>
             <button onClick={handleDownloadMarkdown} className="tool-btn"><Download className="w-4 h-4 text-cyan-400" /><span>.MD</span></button>
+            <button onClick={() => exportIncidentPdf(record)} className="tool-btn"><Printer className="w-4 h-4 text-cyan-400" /><span>PDF</span></button>
             <button onClick={() => exportIncidentJson(record)} className="tool-btn"><Braces className="w-4 h-4 text-cyan-400" /><span>JSON</span></button>
             <button onClick={() => exportIncidentIocsCsv(record)} disabled={record.parsedData.iocs.length === 0} className="tool-btn disabled:opacity-40"><Table2 className="w-4 h-4 text-cyan-400" /><span>CSV IOCs</span></button>
             <button onClick={onOpenTicketModal} className="flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-cyan-600 to-blue-600 text-white rounded-lg text-xs font-semibold"><Ticket className="w-4 h-4" /><span>Ticket</span></button>
@@ -188,22 +186,13 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ record, onUpdateReco
 
       {activeTab === "iocs" && (
         <div className="space-y-3">
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs text-slate-400">
-            Validação local verifica apenas o formato sintático. Reputação, geolocalização e histórico externo não são consultados automaticamente.
-          </div>
+          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 text-xs text-slate-400">Validação local verifica apenas o formato sintático. Reputação, geolocalização e histórico externo não são consultados automaticamente.</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {record.parsedData.iocs.length === 0 ? <div className="md:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6 text-sm text-slate-400">Nenhum IOC confiável foi extraído.</div> : record.parsedData.iocs.map((ioc, index) => (
               <button key={`${ioc.type}-${ioc.value}-${index}`} onClick={() => handleCopyIoc(ioc.value)} className="text-left bg-slate-900 border border-slate-800 hover:border-cyan-800 rounded-xl p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2"><span className="text-[10px] font-mono uppercase text-cyan-400">{ioc.type}</span>{ioc.validFormat === false ? <BadgeAlert className="w-4 h-4 text-amber-400" /> : <BadgeCheck className="w-4 h-4 text-emerald-400" />}</div>
-                  <span className="text-[10px] text-slate-500">{copiedIoc === ioc.value ? "Copiado" : "Clique para copiar"}</span>
-                </div>
+                <div className="flex items-center justify-between gap-3"><div className="flex items-center gap-2"><span className="text-[10px] font-mono uppercase text-cyan-400">{ioc.type}</span>{ioc.validFormat === false ? <BadgeAlert className="w-4 h-4 text-amber-400" /> : <BadgeCheck className="w-4 h-4 text-emerald-400" />}</div><span className="text-[10px] text-slate-500">{copiedIoc === ioc.value ? "Copiado" : "Clique para copiar"}</span></div>
                 <code className="block mt-2 break-all text-xs text-slate-200">{ioc.value}</code>
-                <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-mono">
-                  <span className="px-2 py-1 rounded bg-slate-950 border border-slate-800 text-slate-400">Confiança: {ioc.confidence || "N/D"}</span>
-                  <span className="px-2 py-1 rounded bg-slate-950 border border-slate-800 text-slate-400">Origem: {ioc.source || "Legado"}</span>
-                  <span className={`px-2 py-1 rounded border ${ioc.validFormat === false ? "bg-amber-950/40 border-amber-900 text-amber-400" : "bg-emerald-950/40 border-emerald-900 text-emerald-400"}`}>{ioc.validFormat === false ? "Revisar formato" : "Formato válido"}</span>
-                </div>
+                <div className="mt-3 flex flex-wrap gap-2 text-[10px] font-mono"><span className="px-2 py-1 rounded bg-slate-950 border border-slate-800 text-slate-400">Confiança: {ioc.confidence || "N/D"}</span><span className="px-2 py-1 rounded bg-slate-950 border border-slate-800 text-slate-400">Origem: {ioc.source || "Legado"}</span><span className={`px-2 py-1 rounded border ${ioc.validFormat === false ? "bg-amber-950/40 border-amber-900 text-amber-400" : "bg-emerald-950/40 border-emerald-900 text-emerald-400"}`}>{ioc.validFormat === false ? "Revisar formato" : "Formato válido"}</span></div>
                 {ioc.notes && <p className="mt-2 text-[11px] text-slate-500">{ioc.notes}</p>}
               </button>
             ))}
@@ -213,9 +202,7 @@ export const ReportViewer: React.FC<ReportViewerProps> = ({ record, onUpdateReco
 
       {activeTab === "mitre" && (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-          {record.parsedData.mitreTechniques.length === 0 ? <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6 text-sm text-slate-400">Nenhuma técnica MITRE foi identificada com confiança.</div> : record.parsedData.mitreTechniques.map((technique) => (
-            <div key={technique.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center justify-between gap-3 mb-2"><span className="font-mono text-cyan-400 font-bold">{technique.id}</span><span className="text-[10px] uppercase text-slate-500">{technique.tactic}</span></div><div className="text-sm font-semibold text-slate-100">{technique.name}</div><p className="text-xs text-slate-400 mt-2 leading-relaxed">{technique.description}</p></div>
-          ))}
+          {record.parsedData.mitreTechniques.length === 0 ? <div className="lg:col-span-2 bg-slate-900 border border-slate-800 rounded-xl p-6 text-sm text-slate-400">Nenhuma técnica MITRE foi identificada com confiança.</div> : record.parsedData.mitreTechniques.map((technique) => <div key={technique.id} className="bg-slate-900 border border-slate-800 rounded-xl p-4"><div className="flex items-center justify-between gap-3 mb-2"><span className="font-mono text-cyan-400 font-bold">{technique.id}</span><span className="text-[10px] uppercase text-slate-500">{technique.tactic}</span></div><div className="text-sm font-semibold text-slate-100">{technique.name}</div><p className="text-xs text-slate-400 mt-2 leading-relaxed">{technique.description}</p></div>)}
         </div>
       )}
 
