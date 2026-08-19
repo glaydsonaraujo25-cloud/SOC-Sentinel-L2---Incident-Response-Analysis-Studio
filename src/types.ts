@@ -28,7 +28,7 @@ export interface ExtractedIOC {
   value: string;
   notes?: string;
   confidence?: IOCConfidence;
-  source?: "IOC Section" | "Report Regex" | "Manual";
+  source?: "IOC Section" | "Report Regex" | "Manual" | "Structured AI";
   validFormat?: boolean;
 }
 
@@ -37,6 +37,8 @@ export interface MitreTechnique {
   name: string;
   tactic: string;
   description: string;
+  validated?: boolean;
+  officialUrl?: string;
 }
 
 export interface ActionItem {
@@ -70,12 +72,42 @@ export interface ParsedReportData {
   priorityJustification: string;
 }
 
+export interface StructuredIncidentAnalysis {
+  summary: string;
+  classification: {
+    category: string;
+    severity: IncidentSeverity;
+    likelihood: "Baixa" | "Média" | "Alta" | "Confirmada";
+  };
+  iocs: Array<{
+    type: "IP" | "Domain" | "Hash" | "File" | "Process" | "URL";
+    value: string;
+    confidence: IOCConfidence;
+    evidence: string;
+  }>;
+  possibleAttack: string;
+  impact: string;
+  immediateActions: string[];
+  investigation: string[];
+  recommendations: string[];
+  mitre: Array<{
+    id: string;
+    reason: string;
+  }>;
+  priority: {
+    level: IncidentPriority;
+    justification: string;
+  };
+}
+
 export interface IncidentAnalysisRecord {
   id: string;
   createdAt: string;
   input: IncidentInput;
   rawMarkdown: string;
   parsedData: ParsedReportData;
+  structuredAnalysis?: StructuredIncidentAnalysis;
+  analysisFormat?: "structured-json" | "legacy-markdown";
   riskScore?: number;
   status?: IncidentStatus;
   actions?: ActionItem[];
