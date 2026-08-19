@@ -42,6 +42,37 @@ function calculateRiskScore(record: Omit<IncidentAnalysisRecord, "riskScore">) {
   );
 }
 
+function getErrorMessage(value: unknown, fallback = "Não foi possível concluir a análise do incidente."): string {
+  if (!value) return fallback;
+
+  if (typeof value === "string") return value;
+
+  if (value instanceof Error) return value.message || fallback;
+
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+
+    for (const key of ["error", "message", "detail", "details"]) {
+      const candidate = obj[key];
+      if (typeof candidate === "string" && candidate.trim()) {
+        return candidate;
+      }
+      if (candidate && typeof candidate === "object") {
+        const nested = getErrorMessage(candidate, "");
+        if (nested) return nested;
+      }
+    }
+
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return fallback;
+    }
+  }
+
+  return String(value);
+}
+
 async function parseApiResponse(response: Response) {
   const contentType = response.headers.get("content-type") || "";
   const rawBody = await response.text();
@@ -144,11 +175,15 @@ export default function App() {
       }
 
       if (!response.ok) {
-        throw new Error(data?.error || `Erro HTTP ${response.status} ao conectar com o motor de análise SOC.`);
+        throw new Error(
+          getErrorMessage(data, `Erro HTTP ${response.status} ao conectar com o motor de análise SOC.`)
+        );
       }
 
       if (!data || typeof data.report !== "string" || !data.report.trim()) {
-        throw new Error("A API respondeu sem um relatório válido.");
+        throw new Error(
+          getErrorMessage(data, "A API respondeu sem um relatório válido.")
+        );
       }
 
       const rawMarkdown = data.report;
@@ -171,9 +206,9 @@ export default function App() {
 
       setActiveRecord(record);
       saveRecordToHistory(record);
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error("Error analyzing incident:", err);
-      setError(err.message || "Não foi possível concluir a análise do incidente.");
+      setError(getErrorMessage(err));
     } finally {
       setIsLoading(false);
     }
