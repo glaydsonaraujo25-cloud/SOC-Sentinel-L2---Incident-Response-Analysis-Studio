@@ -74,6 +74,8 @@ export interface IncidentAnalysisRecord {
   riskScore?: number;
   status?: IncidentStatus;
   actions?: ActionItem[];
+  timeline?: TimelineEvent[];
+  playbookCompleted?: string[];
 }
 
 export interface IncidentPreset {
