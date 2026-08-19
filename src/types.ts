@@ -13,6 +13,8 @@ export type IncidentStatus =
   | "Recuperado"
   | "Fechado";
 
+export type IOCConfidence = "Alta" | "Média" | "Baixa";
+
 export interface IncidentInput {
   descricao: string;
   tipo: string;
@@ -25,6 +27,9 @@ export interface ExtractedIOC {
   type: "IP" | "Domain" | "Hash" | "File" | "Process" | "URL";
   value: string;
   notes?: string;
+  confidence?: IOCConfidence;
+  source?: "IOC Section" | "Report Regex" | "Manual";
+  validFormat?: boolean;
 }
 
 export interface MitreTechnique {
