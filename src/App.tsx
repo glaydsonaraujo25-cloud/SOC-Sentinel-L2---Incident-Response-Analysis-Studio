@@ -4,9 +4,13 @@ import { IncidentForm } from "./components/IncidentForm";
 import { ReportViewer } from "./components/ReportViewer";
 import { IncidentHistory } from "./components/IncidentHistory";
 import { TicketModal } from "./components/TicketModal";
+import { SocDashboard } from "./components/SocDashboard";
+import { IncidentTimeline } from "./components/IncidentTimeline";
+import { PlaybookPanel } from "./components/PlaybookPanel";
 import {
   IncidentInput,
   IncidentAnalysisRecord,
+  TimelineEvent,
 } from "./types";
 import { parseMarkdownReport } from "./lib/parser";
 import { ShieldAlert, AlertCircle } from "lucide-react";
@@ -44,25 +48,19 @@ function calculateRiskScore(record: Omit<IncidentAnalysisRecord, "riskScore">) {
 
 function getErrorMessage(value: unknown, fallback = "Não foi possível concluir a análise do incidente."): string {
   if (!value) return fallback;
-
   if (typeof value === "string") return value;
-
   if (value instanceof Error) return value.message || fallback;
 
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
-
     for (const key of ["error", "message", "detail", "details"]) {
       const candidate = obj[key];
-      if (typeof candidate === "string" && candidate.trim()) {
-        return candidate;
-      }
+      if (typeof candidate === "string" && candidate.trim()) return candidate;
       if (candidate && typeof candidate === "object") {
         const nested = getErrorMessage(candidate, "");
         if (nested) return nested;
       }
     }
-
     try {
       return JSON.stringify(value);
     } catch {
@@ -78,10 +76,7 @@ async function parseApiResponse(response: Response) {
   const rawBody = await response.text();
 
   if (!rawBody.trim()) {
-    return {
-      data: null as any,
-      parseError: "O servidor retornou uma resposta vazia.",
-    };
+    return { data: null as any, parseError: "O servidor retornou uma resposta vazia." };
   }
 
   if (!contentType.includes("application/json")) {
@@ -104,6 +99,15 @@ async function parseApiResponse(response: Response) {
   }
 }
 
+function makeTimelineEvent(stage: string, description: string): TimelineEvent {
+  return {
+    id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+    time: new Date().toISOString(),
+    stage,
+    description,
+  };
+}
+
 export default function App() {
   const [history, setHistory] = useState<IncidentAnalysisRecord[]>([]);
   const [activeRecord, setActiveRecord] = useState<IncidentAnalysisRecord | null>(null);
@@ -123,6 +127,18 @@ export default function App() {
           status: record.status || "Novo",
           actions: record.actions || record.parsedData.immediateActions,
           riskScore: record.riskScore ?? calculateRiskScore(record),
+          timeline:
+            record.timeline && record.timeline.length
+              ? record.timeline
+              : [
+                  {
+                    id: `evt-${record.id}-created`,
+                    time: record.createdAt,
+                    stage: record.status || "Novo",
+                    description: "Incidente registrado no SOC Sentinel.",
+                  },
+                ],
+          playbookCompleted: record.playbookCompleted || [],
         }));
         setHistory(normalized);
       }
@@ -144,8 +160,22 @@ export default function App() {
   };
 
   const updateActiveRecord = (updatedRecord: IncidentAnalysisRecord) => {
-    setActiveRecord(updatedRecord);
-    saveRecordToHistory(updatedRecord);
+    const previous = activeRecord;
+    let nextRecord = updatedRecord;
+
+    if (previous && previous.id === updatedRecord.id && previous.status !== updatedRecord.status) {
+      const nextStatus = updatedRecord.status || "Novo";
+      nextRecord = {
+        ...updatedRecord,
+        timeline: [
+          ...(updatedRecord.timeline || previous.timeline || []),
+          makeTimelineEvent(nextStatus, `Status alterado de ${previous.status || "Novo"} para ${nextStatus}.`),
+        ],
+      };
+    }
+
+    setActiveRecord(nextRecord);
+    saveRecordToHistory(nextRecord);
   };
 
   const handleClearHistory = () => {
@@ -163,16 +193,13 @@ export default function App() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Accept": "application/json",
+          Accept: "application/json",
         },
         body: JSON.stringify(input),
       });
 
       const { data, parseError } = await parseApiResponse(response);
-
-      if (parseError) {
-        throw new Error(parseError);
-      }
+      if (parseError) throw new Error(parseError);
 
       if (!response.ok) {
         throw new Error(
@@ -181,22 +208,30 @@ export default function App() {
       }
 
       if (!data || typeof data.report !== "string" || !data.report.trim()) {
-        throw new Error(
-          getErrorMessage(data, "A API respondeu sem um relatório válido.")
-        );
+        throw new Error(getErrorMessage(data, "A API respondeu sem um relatório válido."));
       }
 
       const rawMarkdown = data.report;
       const parsedData = parseMarkdownReport(rawMarkdown);
+      const createdAt = data.timestamp || new Date().toISOString();
 
       const baseRecord: IncidentAnalysisRecord = {
         id: `inc-${Date.now()}`,
-        createdAt: data.timestamp || new Date().toISOString(),
+        createdAt,
         input,
         rawMarkdown,
         parsedData,
         status: "Novo",
         actions: parsedData.immediateActions,
+        timeline: [
+          {
+            id: `evt-${Date.now()}-created`,
+            time: createdAt,
+            stage: "Novo",
+            description: "Incidente analisado e registrado no SOC Sentinel.",
+          },
+        ],
+        playbookCompleted: [],
       };
 
       const record: IncidentAnalysisRecord = {
@@ -237,14 +272,23 @@ export default function App() {
         )}
 
         {!activeRecord ? (
-          <IncidentForm onSubmit={handleAnalyzeIncident} isLoading={isLoading} />
+          <>
+            <SocDashboard history={history} />
+            <IncidentForm onSubmit={handleAnalyzeIncident} isLoading={isLoading} />
+          </>
         ) : (
-          <ReportViewer
-            record={activeRecord}
-            onUpdateRecord={updateActiveRecord}
-            onOpenTicketModal={() => setShowTicketModal(true)}
-            onNewIncident={() => setActiveRecord(null)}
-          />
+          <>
+            <ReportViewer
+              record={activeRecord}
+              onUpdateRecord={updateActiveRecord}
+              onOpenTicketModal={() => setShowTicketModal(true)}
+              onNewIncident={() => setActiveRecord(null)}
+            />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <IncidentTimeline record={activeRecord} onUpdateRecord={updateActiveRecord} />
+              <PlaybookPanel record={activeRecord} onUpdateRecord={updateActiveRecord} />
+            </div>
+          </>
         )}
       </main>
 
@@ -261,10 +305,7 @@ export default function App() {
       )}
 
       {showTicketModal && activeRecord && (
-        <TicketModal
-          record={activeRecord}
-          onClose={() => setShowTicketModal(false)}
-        />
+        <TicketModal record={activeRecord} onClose={() => setShowTicketModal(false)} />
       )}
 
       <footer className="border-t border-slate-900 bg-slate-950 py-6 text-center text-xs text-slate-500 font-mono">
