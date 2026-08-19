@@ -11,8 +11,13 @@ import {
   IncidentInput,
   IncidentAnalysisRecord,
   TimelineEvent,
+  StructuredIncidentAnalysis,
 } from "./types";
 import { parseMarkdownReport } from "./lib/parser";
+import {
+  structuredAnalysisToMarkdown,
+  structuredAnalysisToParsedData,
+} from "./lib/structuredReport";
 import { ShieldAlert, AlertCircle } from "lucide-react";
 
 function calculateRiskScore(record: Omit<IncidentAnalysisRecord, "riskScore">) {
@@ -22,14 +27,12 @@ function calculateRiskScore(record: Omit<IncidentAnalysisRecord, "riskScore">) {
     "Média": 18,
     "Baixa": 10,
   };
-
   const severityScore: Record<string, number> = {
     "Crítica": 35,
     "Alta": 28,
     "Média": 18,
     "Baixa": 10,
   };
-
   const likelihoodScore: Record<string, number> = {
     "Confirmada": 20,
     "Alta": 16,
@@ -61,11 +64,7 @@ function getErrorMessage(value: unknown, fallback = "Não foi possível concluir
         if (nested) return nested;
       }
     }
-    try {
-      return JSON.stringify(value);
-    } catch {
-      return fallback;
-    }
+    try { return JSON.stringify(value); } catch { return fallback; }
   }
 
   return String(value);
@@ -75,9 +74,7 @@ async function parseApiResponse(response: Response) {
   const contentType = response.headers.get("content-type") || "";
   const rawBody = await response.text();
 
-  if (!rawBody.trim()) {
-    return { data: null as any, parseError: "O servidor retornou uma resposta vazia." };
-  }
+  if (!rawBody.trim()) return { data: null as any, parseError: "O servidor retornou uma resposta vazia." };
 
   if (!contentType.includes("application/json")) {
     const preview = rawBody.replace(/\s+/g, " ").slice(0, 180);
@@ -89,14 +86,8 @@ async function parseApiResponse(response: Response) {
     };
   }
 
-  try {
-    return { data: JSON.parse(rawBody), parseError: null as string | null };
-  } catch {
-    return {
-      data: null as any,
-      parseError: "O servidor retornou JSON inválido. Recarregue a aplicação e tente novamente.",
-    };
-  }
+  try { return { data: JSON.parse(rawBody), parseError: null as string | null }; }
+  catch { return { data: null as any, parseError: "O servidor retornou JSON inválido. Recarregue a aplicação e tente novamente." }; }
 }
 
 function makeTimelineEvent(stage: string, description: string): TimelineEvent {
@@ -108,12 +99,26 @@ function makeTimelineEvent(stage: string, description: string): TimelineEvent {
   };
 }
 
+function isStructuredAnalysis(value: unknown): value is StructuredIncidentAnalysis {
+  if (!value || typeof value !== "object") return false;
+  const analysis = value as Record<string, any>;
+  return Boolean(
+    typeof analysis.summary === "string" &&
+    analysis.classification &&
+    typeof analysis.classification.category === "string" &&
+    Array.isArray(analysis.iocs) &&
+    Array.isArray(analysis.immediateActions) &&
+    Array.isArray(analysis.mitre) &&
+    analysis.priority &&
+    typeof analysis.priority.level === "string"
+  );
+}
+
 export default function App() {
   const [history, setHistory] = useState<IncidentAnalysisRecord[]>([]);
   const [activeRecord, setActiveRecord] = useState<IncidentAnalysisRecord | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
   const [showHistoryModal, setShowHistoryModal] = useState(false);
   const [showTicketModal, setShowTicketModal] = useState(false);
 
@@ -127,17 +132,16 @@ export default function App() {
           status: record.status || "Novo",
           actions: record.actions || record.parsedData.immediateActions,
           riskScore: record.riskScore ?? calculateRiskScore(record),
+          analysisFormat: record.analysisFormat || "legacy-markdown",
           timeline:
             record.timeline && record.timeline.length
               ? record.timeline
-              : [
-                  {
-                    id: `evt-${record.id}-created`,
-                    time: record.createdAt,
-                    stage: record.status || "Novo",
-                    description: "Incidente registrado no SOC Sentinel.",
-                  },
-                ],
+              : [{
+                  id: `evt-${record.id}-created`,
+                  time: record.createdAt,
+                  stage: record.status || "Novo",
+                  description: "Incidente registrado no SOC Sentinel.",
+                }],
           playbookCompleted: record.playbookCompleted || [],
         }));
         setHistory(normalized);
@@ -150,11 +154,8 @@ export default function App() {
   const saveRecordToHistory = (record: IncidentAnalysisRecord) => {
     setHistory((current) => {
       const updated = [record, ...current.filter((h) => h.id !== record.id)];
-      try {
-        localStorage.setItem("soc_sentinel_incident_history", JSON.stringify(updated));
-      } catch (e) {
-        console.error("Failed to save history", e);
-      }
+      try { localStorage.setItem("soc_sentinel_incident_history", JSON.stringify(updated)); }
+      catch (e) { console.error("Failed to save history", e); }
       return updated;
     });
   };
@@ -191,28 +192,30 @@ export default function App() {
     try {
       const response = await fetch("/api/analyze-incident", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify(input),
       });
 
       const { data, parseError } = await parseApiResponse(response);
       if (parseError) throw new Error(parseError);
-
       if (!response.ok) {
-        throw new Error(
-          getErrorMessage(data, `Erro HTTP ${response.status} ao conectar com o motor de análise SOC.`)
-        );
+        throw new Error(getErrorMessage(data, `Erro HTTP ${response.status} ao conectar com o motor de análise SOC.`));
       }
 
-      if (!data || typeof data.report !== "string" || !data.report.trim()) {
+      const structuredAnalysis = isStructuredAnalysis(data?.analysis) ? data.analysis : undefined;
+      const rawMarkdown = structuredAnalysis
+        ? (typeof data.report === "string" && data.report.trim()
+            ? data.report
+            : structuredAnalysisToMarkdown(structuredAnalysis))
+        : data?.report;
+
+      if (typeof rawMarkdown !== "string" || !rawMarkdown.trim()) {
         throw new Error(getErrorMessage(data, "A API respondeu sem um relatório válido."));
       }
 
-      const rawMarkdown = data.report;
-      const parsedData = parseMarkdownReport(rawMarkdown);
+      const parsedData = structuredAnalysis
+        ? structuredAnalysisToParsedData(structuredAnalysis)
+        : parseMarkdownReport(rawMarkdown);
       const createdAt = data.timestamp || new Date().toISOString();
 
       const baseRecord: IncidentAnalysisRecord = {
@@ -221,24 +224,22 @@ export default function App() {
         input,
         rawMarkdown,
         parsedData,
+        structuredAnalysis,
+        analysisFormat: structuredAnalysis ? "structured-json" : "legacy-markdown",
         status: "Novo",
         actions: parsedData.immediateActions,
-        timeline: [
-          {
-            id: `evt-${Date.now()}-created`,
-            time: createdAt,
-            stage: "Novo",
-            description: "Incidente analisado e registrado no SOC Sentinel.",
-          },
-        ],
+        timeline: [{
+          id: `evt-${Date.now()}-created`,
+          time: createdAt,
+          stage: "Novo",
+          description: structuredAnalysis
+            ? "Incidente analisado com saída estruturada e registrado no SOC Sentinel."
+            : "Incidente analisado em modo legado e registrado no SOC Sentinel.",
+        }],
         playbookCompleted: [],
       };
 
-      const record: IncidentAnalysisRecord = {
-        ...baseRecord,
-        riskScore: calculateRiskScore(baseRecord),
-      };
-
+      const record: IncidentAnalysisRecord = { ...baseRecord, riskScore: calculateRiskScore(baseRecord) };
       setActiveRecord(record);
       saveRecordToHistory(record);
     } catch (err: unknown) {
@@ -251,14 +252,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-900 selection:text-cyan-100">
-      <Header
-        totalAnalyzed={history.length}
-        onOpenHistory={() => setShowHistoryModal(true)}
-        onNewIncident={() => {
-          setActiveRecord(null);
-          setError(null);
-        }}
-      />
+      <Header totalAnalyzed={history.length} onOpenHistory={() => setShowHistoryModal(true)} onNewIncident={() => { setActiveRecord(null); setError(null); }} />
 
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
         {error && (
@@ -278,12 +272,7 @@ export default function App() {
           </>
         ) : (
           <>
-            <ReportViewer
-              record={activeRecord}
-              onUpdateRecord={updateActiveRecord}
-              onOpenTicketModal={() => setShowTicketModal(true)}
-              onNewIncident={() => setActiveRecord(null)}
-            />
+            <ReportViewer record={activeRecord} onUpdateRecord={updateActiveRecord} onOpenTicketModal={() => setShowTicketModal(true)} onNewIncident={() => setActiveRecord(null)} />
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
               <IncidentTimeline record={activeRecord} onUpdateRecord={updateActiveRecord} />
               <PlaybookPanel record={activeRecord} onUpdateRecord={updateActiveRecord} />
@@ -293,20 +282,10 @@ export default function App() {
       </main>
 
       {showHistoryModal && (
-        <IncidentHistory
-          history={history}
-          onSelectRecord={(rec) => {
-            setActiveRecord(rec);
-            setShowHistoryModal(false);
-          }}
-          onClearHistory={handleClearHistory}
-          onClose={() => setShowHistoryModal(false)}
-        />
+        <IncidentHistory history={history} onSelectRecord={(rec) => { setActiveRecord(rec); setShowHistoryModal(false); }} onClearHistory={handleClearHistory} onClose={() => setShowHistoryModal(false)} />
       )}
 
-      {showTicketModal && activeRecord && (
-        <TicketModal record={activeRecord} onClose={() => setShowTicketModal(false)} />
-      )}
+      {showTicketModal && activeRecord && <TicketModal record={activeRecord} onClose={() => setShowTicketModal(false)} />}
 
       <footer className="border-t border-slate-900 bg-slate-950 py-6 text-center text-xs text-slate-500 font-mono">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
