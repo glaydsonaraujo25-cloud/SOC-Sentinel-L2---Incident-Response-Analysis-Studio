@@ -42,6 +42,37 @@ function calculateRiskScore(record: Omit<IncidentAnalysisRecord, "riskScore">) {
   );
 }
 
+async function parseApiResponse(response: Response) {
+  const contentType = response.headers.get("content-type") || "";
+  const rawBody = await response.text();
+
+  if (!rawBody.trim()) {
+    return {
+      data: null as any,
+      parseError: "O servidor retornou uma resposta vazia.",
+    };
+  }
+
+  if (!contentType.includes("application/json")) {
+    const preview = rawBody.replace(/\s+/g, " ").slice(0, 180);
+    return {
+      data: null as any,
+      parseError: response.ok
+        ? "O servidor retornou uma resposta em formato inesperado."
+        : `O servidor retornou um erro não-JSON (${response.status}). ${preview}`,
+    };
+  }
+
+  try {
+    return { data: JSON.parse(rawBody), parseError: null as string | null };
+  } catch {
+    return {
+      data: null as any,
+      parseError: "O servidor retornou JSON inválido. Recarregue a aplicação e tente novamente.",
+    };
+  }
+}
+
 export default function App() {
   const [history, setHistory] = useState<IncidentAnalysisRecord[]>([]);
   const [activeRecord, setActiveRecord] = useState<IncidentAnalysisRecord | null>(null);
@@ -99,14 +130,25 @@ export default function App() {
     try {
       const response = await fetch("/api/analyze-incident", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+        },
         body: JSON.stringify(input),
       });
 
-      const data = await response.json();
+      const { data, parseError } = await parseApiResponse(response);
+
+      if (parseError) {
+        throw new Error(parseError);
+      }
 
       if (!response.ok) {
-        throw new Error(data.error || "Erro ao conectar com o motor de análise SOC.");
+        throw new Error(data?.error || `Erro HTTP ${response.status} ao conectar com o motor de análise SOC.`);
+      }
+
+      if (!data || typeof data.report !== "string" || !data.report.trim()) {
+        throw new Error("A API respondeu sem um relatório válido.");
       }
 
       const rawMarkdown = data.report;
