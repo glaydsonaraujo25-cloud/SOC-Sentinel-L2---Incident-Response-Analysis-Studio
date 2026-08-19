@@ -5,7 +5,7 @@ import {
   StructuredIncidentAnalysis,
 } from "../types";
 import { MITRE_CATALOG, getMitreTechniqueUrl } from "../data/mitreCatalog";
-import { enrichIoc } from "./iocValidation";
+import { enrichIOC, validateIOCFormat } from "./ioc";
 
 function joinLines(items: string[]) {
   return items.filter(Boolean).join("\n");
@@ -16,15 +16,19 @@ export function structuredAnalysisToParsedData(
 ): ParsedReportData {
   const iocs: ExtractedIOC[] = (analysis.iocs || [])
     .filter((ioc) => ioc.value?.trim())
-    .map((ioc) =>
-      enrichIoc({
-        type: ioc.type,
-        value: ioc.value.trim(),
-        confidence: ioc.confidence,
-        source: "Structured AI",
-        notes: ioc.evidence || "Extraído da resposta estruturada da IA.",
-      }),
-    );
+    .map((ioc) => {
+      const enriched = enrichIOC(
+        { type: ioc.type, value: ioc.value.trim() },
+        "Structured AI",
+      );
+      return {
+        ...enriched,
+        confidence: validateIOCFormat(ioc.type, ioc.value)
+          ? ioc.confidence
+          : "Baixa",
+        notes: ioc.evidence || enriched.notes,
+      };
+    });
 
   const immediateActions: ActionItem[] = (analysis.immediateActions || []).map(
     (text, index) => ({
@@ -34,8 +38,15 @@ export function structuredAnalysisToParsedData(
     }),
   );
 
+  const seen = new Set<string>();
   const mitreTechniques = (analysis.mitre || [])
     .filter((item) => /^T\d{4}(?:\.\d{3})?$/.test(item.id || ""))
+    .filter((item) => {
+      const id = item.id.toUpperCase();
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    })
     .map((item) => {
       const id = item.id.toUpperCase();
       const catalog = MITRE_CATALOG[id];
@@ -69,12 +80,21 @@ export function structuredAnalysisToParsedData(
 export function structuredAnalysisToMarkdown(
   analysis: StructuredIncidentAnalysis,
 ): string {
+  const labels: Record<string, string> = {
+    IP: "Endereços IP",
+    Domain: "Domínios",
+    Hash: "Hashes",
+    File: "Arquivos",
+    Process: "Processos",
+    URL: "URLs",
+  };
+
   const iocGroups = ["IP", "Domain", "Hash", "File", "Process", "URL"].map((type) => {
     const values = analysis.iocs
       .filter((ioc) => ioc.type === type)
       .map((ioc) => ioc.value)
       .join(", ");
-    return `- ${type}: ${values || "Não informado"}`;
+    return `- ${labels[type]}: ${values || "Não informado"}`;
   });
 
   const mitre = analysis.mitre.length
