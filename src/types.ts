@@ -4,6 +4,15 @@ export type IncidentPriority = "P1" | "P2" | "P3" | "P4";
 
 export type IncidentSeverity = "Baixa" | "Média" | "Alta" | "Crítica";
 
+export type IncidentStatus =
+  | "Novo"
+  | "Triagem"
+  | "Investigando"
+  | "Contido"
+  | "Erradicado"
+  | "Recuperado"
+  | "Fechado";
+
 export interface IncidentInput {
   descricao: string;
   tipo: string;
@@ -19,9 +28,9 @@ export interface ExtractedIOC {
 }
 
 export interface MitreTechnique {
-  id: string; // e.g., T1059.001
-  name: string; // e.g., PowerShell
-  tactic: string; // e.g., Execution
+  id: string;
+  name: string;
+  tactic: string;
   description: string;
 }
 
@@ -62,6 +71,9 @@ export interface IncidentAnalysisRecord {
   input: IncidentInput;
   rawMarkdown: string;
   parsedData: ParsedReportData;
+  riskScore?: number;
+  status?: IncidentStatus;
+  actions?: ActionItem[];
 }
 
 export interface IncidentPreset {
