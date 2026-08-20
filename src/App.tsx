@@ -7,6 +7,7 @@ import { TicketModal } from "./components/TicketModal";
 import { SocDashboard } from "./components/SocDashboard";
 import { IncidentTimeline } from "./components/IncidentTimeline";
 import { PlaybookPanel } from "./components/PlaybookPanel";
+import { ThreatIntelPanel } from "./components/ThreatIntelPanel";
 import {
   IncidentInput,
   IncidentAnalysisRecord,
@@ -273,6 +274,7 @@ export default function App() {
         ) : (
           <>
             <ReportViewer record={activeRecord} onUpdateRecord={updateActiveRecord} onOpenTicketModal={() => setShowTicketModal(true)} onNewIncident={() => setActiveRecord(null)} />
+            <ThreatIntelPanel record={activeRecord} onUpdateRecord={updateActiveRecord} />
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
               <IncidentTimeline record={activeRecord} onUpdateRecord={updateActiveRecord} />
               <PlaybookPanel record={activeRecord} onUpdateRecord={updateActiveRecord} />
