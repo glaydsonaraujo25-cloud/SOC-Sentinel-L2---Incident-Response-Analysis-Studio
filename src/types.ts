@@ -14,6 +14,21 @@ export type IncidentStatus =
   | "Fechado";
 
 export type IOCConfidence = "Alta" | "Média" | "Baixa";
+export type ThreatVerdict = "Malicioso" | "Suspeito" | "Limpo" | "Desconhecido";
+
+export interface ThreatIntelResult {
+  provider: string;
+  verdict: ThreatVerdict;
+  score?: number;
+  malicious?: number;
+  suspicious?: number;
+  harmless?: number;
+  country?: string;
+  asOwner?: string;
+  totalReports?: number;
+  lastCheckedAt: string;
+  details?: string;
+}
 
 export interface IncidentInput {
   descricao: string;
@@ -30,6 +45,7 @@ export interface ExtractedIOC {
   confidence?: IOCConfidence;
   source?: "IOC Section" | "Report Regex" | "Manual" | "Structured AI";
   validFormat?: boolean;
+  threatIntel?: ThreatIntelResult[];
 }
 
 export interface MitreTechnique {
