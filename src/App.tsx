@@ -13,48 +13,49 @@ import {
   IncidentAnalysisRecord,
   TimelineEvent,
   StructuredIncidentAnalysis,
+  ExtractedIOC,
 } from "./types";
 import { parseMarkdownReport } from "./lib/parser";
-import {
-  structuredAnalysisToMarkdown,
-  structuredAnalysisToParsedData,
-} from "./lib/structuredReport";
+import { structuredAnalysisToMarkdown, structuredAnalysisToParsedData } from "./lib/structuredReport";
+import { evidenceIocs, evidenceTimelineEvents } from "./lib/evidence";
 import { ShieldAlert, AlertCircle } from "lucide-react";
 
 function calculateRiskScore(record: Omit<IncidentAnalysisRecord, "riskScore">) {
-  const criticalityScore: Record<string, number> = {
-    "Crítica": 35,
-    "Alta": 28,
-    "Média": 18,
-    "Baixa": 10,
-  };
-  const severityScore: Record<string, number> = {
-    "Crítica": 35,
-    "Alta": 28,
-    "Média": 18,
-    "Baixa": 10,
-  };
-  const likelihoodScore: Record<string, number> = {
-    "Confirmada": 20,
-    "Alta": 16,
-    "Média": 10,
-    "Baixa": 5,
-  };
-
-  return Math.min(
-    100,
+  const criticalityScore: Record<string, number> = { Crítica: 35, Alta: 28, Média: 18, Baixa: 10 };
+  const severityScore: Record<string, number> = { Crítica: 35, Alta: 28, Média: 18, Baixa: 10 };
+  const likelihoodScore: Record<string, number> = { Confirmada: 20, Alta: 16, Média: 10, Baixa: 5 };
+  return Math.min(100,
     (criticalityScore[record.input.criticidade] || 10) +
-      (severityScore[record.parsedData.severity] || 18) +
-      (likelihoodScore[record.parsedData.likelihood] || 10) +
-      Math.min(record.parsedData.iocs.length * 2, 10)
+    (severityScore[record.parsedData.severity] || 18) +
+    (likelihoodScore[record.parsedData.likelihood] || 10) +
+    Math.min(record.parsedData.iocs.length * 2, 10)
   );
+}
+
+function calculateConfidenceScore(record: Omit<IncidentAnalysisRecord, "confidenceScore">) {
+  let score = record.analysisFormat === "structured-json" ? 35 : 20;
+  const likelihood = record.parsedData.likelihood.toLowerCase();
+  if (likelihood.includes("confirm")) score += 25;
+  else if (likelihood.includes("alta")) score += 18;
+  else if (likelihood.includes("média") || likelihood.includes("media")) score += 10;
+  else score += 5;
+
+  const validIocs = record.parsedData.iocs.filter((ioc) => ioc.validFormat !== false).length;
+  score += Math.min(validIocs * 3, 18);
+
+  const evidenceCount = record.input.evidence?.length || 0;
+  score += Math.min(evidenceCount * 5, 15);
+
+  const validatedMitre = record.parsedData.mitreTechniques.filter((t) => t.validated).length;
+  score += Math.min(validatedMitre * 2, 7);
+
+  return Math.max(0, Math.min(score, 100));
 }
 
 function getErrorMessage(value: unknown, fallback = "Não foi possível concluir a análise do incidente."): string {
   if (!value) return fallback;
   if (typeof value === "string") return value;
   if (value instanceof Error) return value.message || fallback;
-
   if (typeof value === "object") {
     const obj = value as Record<string, unknown>;
     for (const key of ["error", "message", "detail", "details"]) {
@@ -67,52 +68,47 @@ function getErrorMessage(value: unknown, fallback = "Não foi possível concluir
     }
     try { return JSON.stringify(value); } catch { return fallback; }
   }
-
   return String(value);
 }
 
 async function parseApiResponse(response: Response) {
   const contentType = response.headers.get("content-type") || "";
   const rawBody = await response.text();
-
   if (!rawBody.trim()) return { data: null as any, parseError: "O servidor retornou uma resposta vazia." };
-
   if (!contentType.includes("application/json")) {
     const preview = rawBody.replace(/\s+/g, " ").slice(0, 180);
-    return {
-      data: null as any,
-      parseError: response.ok
-        ? "O servidor retornou uma resposta em formato inesperado."
-        : `O servidor retornou um erro não-JSON (${response.status}). ${preview}`,
-    };
+    return { data: null as any, parseError: response.ok ? "O servidor retornou uma resposta em formato inesperado." : `O servidor retornou um erro não-JSON (${response.status}). ${preview}` };
   }
-
   try { return { data: JSON.parse(rawBody), parseError: null as string | null }; }
   catch { return { data: null as any, parseError: "O servidor retornou JSON inválido. Recarregue a aplicação e tente novamente." }; }
 }
 
 function makeTimelineEvent(stage: string, description: string): TimelineEvent {
-  return {
-    id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-    time: new Date().toISOString(),
-    stage,
-    description,
-  };
+  return { id: `evt-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`, time: new Date().toISOString(), stage, description };
 }
 
 function isStructuredAnalysis(value: unknown): value is StructuredIncidentAnalysis {
   if (!value || typeof value !== "object") return false;
   const analysis = value as Record<string, any>;
-  return Boolean(
-    typeof analysis.summary === "string" &&
-    analysis.classification &&
-    typeof analysis.classification.category === "string" &&
-    Array.isArray(analysis.iocs) &&
-    Array.isArray(analysis.immediateActions) &&
-    Array.isArray(analysis.mitre) &&
-    analysis.priority &&
-    typeof analysis.priority.level === "string"
-  );
+  return Boolean(typeof analysis.summary === "string" && analysis.classification && typeof analysis.classification.category === "string" && Array.isArray(analysis.iocs) && Array.isArray(analysis.immediateActions) && Array.isArray(analysis.mitre) && analysis.priority && typeof analysis.priority.level === "string");
+}
+
+function mergeIocs(primary: ExtractedIOC[], extra: ExtractedIOC[]) {
+  const map = new Map<string, ExtractedIOC>();
+  for (const ioc of [...extra, ...primary]) {
+    const key = `${ioc.type}:${ioc.value.toLowerCase()}`;
+    const current = map.get(key);
+    if (!current || current.source !== "Evidence Upload") map.set(key, ioc);
+  }
+  return Array.from(map.values());
+}
+
+function stripEvidenceContent(input: IncidentInput): IncidentInput {
+  if (!input.evidence) return input;
+  return {
+    ...input,
+    evidence: input.evidence.map((item) => ({ ...item, content: "" })),
+  };
 }
 
 export default function App() {
@@ -128,28 +124,22 @@ export default function App() {
       const saved = localStorage.getItem("soc_sentinel_incident_history");
       if (saved) {
         const parsed: IncidentAnalysisRecord[] = JSON.parse(saved);
-        const normalized = parsed.map((record) => ({
-          ...record,
-          status: record.status || "Novo",
-          actions: record.actions || record.parsedData.immediateActions,
-          riskScore: record.riskScore ?? calculateRiskScore(record),
-          analysisFormat: record.analysisFormat || "legacy-markdown",
-          timeline:
-            record.timeline && record.timeline.length
-              ? record.timeline
-              : [{
-                  id: `evt-${record.id}-created`,
-                  time: record.createdAt,
-                  stage: record.status || "Novo",
-                  description: "Incidente registrado no SOC Sentinel.",
-                }],
-          playbookCompleted: record.playbookCompleted || [],
-        }));
+        const normalized = parsed.map((record) => {
+          const withDefaults: IncidentAnalysisRecord = {
+            ...record,
+            status: record.status || "Novo",
+            actions: record.actions || record.parsedData.immediateActions,
+            analysisFormat: record.analysisFormat || "legacy-markdown",
+            timeline: record.timeline?.length ? record.timeline : [{ id: `evt-${record.id}-created`, time: record.createdAt, stage: record.status || "Novo", description: "Incidente registrado no SOC Sentinel." }],
+            playbookCompleted: record.playbookCompleted || [],
+          };
+          withDefaults.riskScore = record.riskScore ?? calculateRiskScore(withDefaults);
+          withDefaults.confidenceScore = record.confidenceScore ?? calculateConfidenceScore(withDefaults);
+          return withDefaults;
+        });
         setHistory(normalized);
       }
-    } catch (e) {
-      console.error("Failed to load incident history from localStorage", e);
-    }
+    } catch (e) { console.error("Failed to load incident history from localStorage", e); }
   }, []);
 
   const saveRecordToHistory = (record: IncidentAnalysisRecord) => {
@@ -164,18 +154,10 @@ export default function App() {
   const updateActiveRecord = (updatedRecord: IncidentAnalysisRecord) => {
     const previous = activeRecord;
     let nextRecord = updatedRecord;
-
     if (previous && previous.id === updatedRecord.id && previous.status !== updatedRecord.status) {
       const nextStatus = updatedRecord.status || "Novo";
-      nextRecord = {
-        ...updatedRecord,
-        timeline: [
-          ...(updatedRecord.timeline || previous.timeline || []),
-          makeTimelineEvent(nextStatus, `Status alterado de ${previous.status || "Novo"} para ${nextStatus}.`),
-        ],
-      };
+      nextRecord = { ...updatedRecord, timeline: [...(updatedRecord.timeline || previous.timeline || []), makeTimelineEvent(nextStatus, `Status alterado de ${previous.status || "Novo"} para ${nextStatus}.`)] };
     }
-
     setActiveRecord(nextRecord);
     saveRecordToHistory(nextRecord);
   };
@@ -191,56 +173,52 @@ export default function App() {
     setError(null);
 
     try {
+      const { evidence, ...apiInput } = input;
       const response = await fetch("/api/analyze-incident", {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "application/json" },
-        body: JSON.stringify(input),
+        body: JSON.stringify(apiInput),
       });
 
       const { data, parseError } = await parseApiResponse(response);
       if (parseError) throw new Error(parseError);
-      if (!response.ok) {
-        throw new Error(getErrorMessage(data, `Erro HTTP ${response.status} ao conectar com o motor de análise SOC.`));
-      }
+      if (!response.ok) throw new Error(getErrorMessage(data, `Erro HTTP ${response.status} ao conectar com o motor de análise SOC.`));
 
       const structuredAnalysis = isStructuredAnalysis(data?.analysis) ? data.analysis : undefined;
-      const rawMarkdown = structuredAnalysis
-        ? (typeof data.report === "string" && data.report.trim()
-            ? data.report
-            : structuredAnalysisToMarkdown(structuredAnalysis))
-        : data?.report;
+      const rawMarkdown = structuredAnalysis ? (typeof data.report === "string" && data.report.trim() ? data.report : structuredAnalysisToMarkdown(structuredAnalysis)) : data?.report;
+      if (typeof rawMarkdown !== "string" || !rawMarkdown.trim()) throw new Error(getErrorMessage(data, "A API respondeu sem um relatório válido."));
 
-      if (typeof rawMarkdown !== "string" || !rawMarkdown.trim()) {
-        throw new Error(getErrorMessage(data, "A API respondeu sem um relatório válido."));
-      }
+      const parsedData = structuredAnalysis ? structuredAnalysisToParsedData(structuredAnalysis) : parseMarkdownReport(rawMarkdown);
+      const uploadedIocs = evidenceIocs(evidence || []);
+      parsedData.iocs = mergeIocs(parsedData.iocs, uploadedIocs);
 
-      const parsedData = structuredAnalysis
-        ? structuredAnalysisToParsedData(structuredAnalysis)
-        : parseMarkdownReport(rawMarkdown);
       const createdAt = data.timestamp || new Date().toISOString();
+      const evidenceEvents = evidenceTimelineEvents(evidence || []);
+      const storedInput = stripEvidenceContent(input);
 
       const baseRecord: IncidentAnalysisRecord = {
         id: `inc-${Date.now()}`,
         createdAt,
-        input,
+        input: storedInput,
         rawMarkdown,
         parsedData,
         structuredAnalysis,
         analysisFormat: structuredAnalysis ? "structured-json" : "legacy-markdown",
         status: "Novo",
         actions: parsedData.immediateActions,
-        timeline: [{
-          id: `evt-${Date.now()}-created`,
-          time: createdAt,
-          stage: "Novo",
-          description: structuredAnalysis
-            ? "Incidente analisado com saída estruturada e registrado no SOC Sentinel."
-            : "Incidente analisado em modo legado e registrado no SOC Sentinel.",
-        }],
+        timeline: [
+          ...evidenceEvents,
+          { id: `evt-${Date.now()}-created`, time: createdAt, stage: "Novo", description: evidence?.length ? `Incidente analisado com ${evidence.length} evidência(s) anexada(s) e registrado no SOC Sentinel.` : "Incidente analisado e registrado no SOC Sentinel." },
+        ].sort((a, b) => a.time.localeCompare(b.time)),
         playbookCompleted: [],
       };
 
-      const record: IncidentAnalysisRecord = { ...baseRecord, riskScore: calculateRiskScore(baseRecord) };
+      const record: IncidentAnalysisRecord = {
+        ...baseRecord,
+        riskScore: calculateRiskScore(baseRecord),
+        confidenceScore: calculateConfidenceScore(baseRecord),
+      };
+
       setActiveRecord(record);
       saveRecordToHistory(record);
     } catch (err: unknown) {
@@ -254,50 +232,13 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans selection:bg-cyan-900 selection:text-cyan-100">
       <Header totalAnalyzed={history.length} onOpenHistory={() => setShowHistoryModal(true)} onNewIncident={() => { setActiveRecord(null); setError(null); }} />
-
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
-        {error && (
-          <div className="bg-red-950/80 border border-red-800 text-red-200 p-4 rounded-xl flex items-start space-x-3 shadow-lg">
-            <AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
-            <div className="flex-1 text-xs">
-              <strong className="font-bold block text-sm mb-0.5">Erro na Análise do Incidente:</strong>
-              <span>{error}</span>
-            </div>
-          </div>
-        )}
-
-        {!activeRecord ? (
-          <>
-            <SocDashboard history={history} />
-            <IncidentForm onSubmit={handleAnalyzeIncident} isLoading={isLoading} />
-          </>
-        ) : (
-          <>
-            <ReportViewer record={activeRecord} onUpdateRecord={updateActiveRecord} onOpenTicketModal={() => setShowTicketModal(true)} onNewIncident={() => setActiveRecord(null)} />
-            <ThreatIntelPanel record={activeRecord} onUpdateRecord={updateActiveRecord} />
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
-              <IncidentTimeline record={activeRecord} onUpdateRecord={updateActiveRecord} />
-              <PlaybookPanel record={activeRecord} onUpdateRecord={updateActiveRecord} />
-            </div>
-          </>
-        )}
+        {error && <div className="bg-red-950/80 border border-red-800 text-red-200 p-4 rounded-xl flex items-start space-x-3 shadow-lg"><AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" /><div className="flex-1 text-xs"><strong className="font-bold block text-sm mb-0.5">Erro na Análise do Incidente:</strong><span>{error}</span></div></div>}
+        {!activeRecord ? <><SocDashboard history={history} /><IncidentForm onSubmit={handleAnalyzeIncident} isLoading={isLoading} /></> : <><ReportViewer record={activeRecord} onUpdateRecord={updateActiveRecord} onOpenTicketModal={() => setShowTicketModal(true)} onNewIncident={() => setActiveRecord(null)} /><ThreatIntelPanel record={activeRecord} onUpdateRecord={updateActiveRecord} /><div className="grid grid-cols-1 xl:grid-cols-2 gap-6"><IncidentTimeline record={activeRecord} onUpdateRecord={updateActiveRecord} /><PlaybookPanel record={activeRecord} onUpdateRecord={updateActiveRecord} /></div></>}
       </main>
-
-      {showHistoryModal && (
-        <IncidentHistory history={history} onSelectRecord={(rec) => { setActiveRecord(rec); setShowHistoryModal(false); }} onClearHistory={handleClearHistory} onClose={() => setShowHistoryModal(false)} />
-      )}
-
+      {showHistoryModal && <IncidentHistory history={history} onSelectRecord={(rec) => { setActiveRecord(rec); setShowHistoryModal(false); }} onClearHistory={handleClearHistory} onClose={() => setShowHistoryModal(false)} />}
       {showTicketModal && activeRecord && <TicketModal record={activeRecord} onClose={() => setShowTicketModal(false)} />}
-
-      <footer className="border-t border-slate-900 bg-slate-950 py-6 text-center text-xs text-slate-500 font-mono">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <div className="flex items-center space-x-2">
-            <ShieldAlert className="w-4 h-4 text-cyan-500" />
-            <span>SOC Sentinel L2 • AI-Assisted Incident Response & Threat Analysis</span>
-          </div>
-          <span>IA como apoio à análise • Validação humana recomendada</span>
-        </div>
-      </footer>
+      <footer className="border-t border-slate-900 bg-slate-950 py-6 text-center text-xs text-slate-500 font-mono"><div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2"><div className="flex items-center space-x-2"><ShieldAlert className="w-4 h-4 text-cyan-500" /><span>SOC Sentinel L2 • AI-Assisted Incident Response & Threat Analysis</span></div><span>IA como apoio à análise • Validação humana recomendada</span></div></footer>
     </div>
   );
 }
