@@ -1,23 +1,37 @@
 import { IncidentAnalysisRecord } from "../types";
 import { isSupabaseConfigured, supabase } from "./supabase";
 
-const LOCAL_KEY = "soc_sentinel_incident_history";
+const LEGACY_LOCAL_KEY = "soc_sentinel_incident_history";
+const storageKey = (scope = "local") => `soc_sentinel_incident_history:${scope}`;
 
-export function loadLocalHistory(): IncidentAnalysisRecord[] {
+export function loadLocalHistory(scope = "local"): IncidentAnalysisRecord[] {
   try {
-    const raw = localStorage.getItem(LOCAL_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const scoped = localStorage.getItem(storageKey(scope));
+    if (scoped) return JSON.parse(scoped);
+
+    if (scope === "local") {
+      const legacy = localStorage.getItem(LEGACY_LOCAL_KEY);
+      if (legacy) {
+        const parsed = JSON.parse(legacy);
+        localStorage.setItem(storageKey(scope), legacy);
+        localStorage.removeItem(LEGACY_LOCAL_KEY);
+        return parsed;
+      }
+    }
+
+    return [];
   } catch {
     return [];
   }
 }
 
-export function saveLocalHistory(records: IncidentAnalysisRecord[]) {
-  localStorage.setItem(LOCAL_KEY, JSON.stringify(records));
+export function saveLocalHistory(records: IncidentAnalysisRecord[], scope = "local") {
+  localStorage.setItem(storageKey(scope), JSON.stringify(records));
 }
 
-export function clearLocalHistory() {
-  localStorage.removeItem(LOCAL_KEY);
+export function clearLocalHistory(scope = "local") {
+  localStorage.removeItem(storageKey(scope));
+  if (scope === "local") localStorage.removeItem(LEGACY_LOCAL_KEY);
 }
 
 export async function loadCloudHistory(userId: string): Promise<IncidentAnalysisRecord[]> {
