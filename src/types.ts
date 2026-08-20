@@ -14,20 +14,14 @@ export type IncidentStatus =
   | "Fechado";
 
 export type IOCConfidence = "Alta" | "Média" | "Baixa";
-export type ThreatVerdict = "Malicioso" | "Suspeito" | "Limpo" | "Desconhecido";
 
-export interface ThreatIntelResult {
-  provider: string;
-  verdict: ThreatVerdict;
-  score?: number;
-  malicious?: number;
-  suspicious?: number;
-  harmless?: number;
-  country?: string;
-  asOwner?: string;
-  totalReports?: number;
-  lastCheckedAt: string;
-  details?: string;
+export interface EvidenceArtifact {
+  name: string;
+  type: string;
+  size: number;
+  content: string;
+  extractedIocs?: Array<{ type: "IP" | "Domain" | "Hash" | "URL"; value: string }>;
+  timestamps?: string[];
 }
 
 export interface IncidentInput {
@@ -36,6 +30,21 @@ export interface IncidentInput {
   criticidade: AssetCriticality;
   contextoAdicional?: string;
   incidentTitle?: string;
+  evidence?: EvidenceArtifact[];
+}
+
+export interface ThreatIntelFinding {
+  provider: "VirusTotal" | "AbuseIPDB";
+  verdict: "Malicioso" | "Suspeito" | "Limpo" | "Desconhecido";
+  score?: number;
+  malicious?: number;
+  suspicious?: number;
+  harmless?: number;
+  country?: string;
+  network?: string;
+  reports?: number;
+  checkedAt: string;
+  error?: string;
 }
 
 export interface ExtractedIOC {
@@ -43,9 +52,9 @@ export interface ExtractedIOC {
   value: string;
   notes?: string;
   confidence?: IOCConfidence;
-  source?: "IOC Section" | "Report Regex" | "Manual" | "Structured AI";
+  source?: "IOC Section" | "Report Regex" | "Manual" | "Structured AI" | "Evidence Upload";
   validFormat?: boolean;
-  threatIntel?: ThreatIntelResult[];
+  threatIntel?: ThreatIntelFinding[];
 }
 
 export interface MitreTechnique {
@@ -125,6 +134,7 @@ export interface IncidentAnalysisRecord {
   structuredAnalysis?: StructuredIncidentAnalysis;
   analysisFormat?: "structured-json" | "legacy-markdown";
   riskScore?: number;
+  confidenceScore?: number;
   status?: IncidentStatus;
   actions?: ActionItem[];
   timeline?: TimelineEvent[];
