@@ -8,6 +8,7 @@ import { SocDashboard } from "./components/SocDashboard";
 import { IncidentTimeline } from "./components/IncidentTimeline";
 import { PlaybookPanel } from "./components/PlaybookPanel";
 import { ThreatIntelPanel } from "./components/ThreatIntelPanel";
+import { EvidenceInsights } from "./components/EvidenceInsights";
 import {
   IncidentInput,
   IncidentAnalysisRecord,
@@ -234,7 +235,16 @@ export default function App() {
       <Header totalAnalyzed={history.length} onOpenHistory={() => setShowHistoryModal(true)} onNewIncident={() => { setActiveRecord(null); setError(null); }} />
       <main className="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-6">
         {error && <div className="bg-red-950/80 border border-red-800 text-red-200 p-4 rounded-xl flex items-start space-x-3 shadow-lg"><AlertCircle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" /><div className="flex-1 text-xs"><strong className="font-bold block text-sm mb-0.5">Erro na Análise do Incidente:</strong><span>{error}</span></div></div>}
-        {!activeRecord ? <><SocDashboard history={history} /><IncidentForm onSubmit={handleAnalyzeIncident} isLoading={isLoading} /></> : <><ReportViewer record={activeRecord} onUpdateRecord={updateActiveRecord} onOpenTicketModal={() => setShowTicketModal(true)} onNewIncident={() => setActiveRecord(null)} /><ThreatIntelPanel record={activeRecord} onUpdateRecord={updateActiveRecord} /><div className="grid grid-cols-1 xl:grid-cols-2 gap-6"><IncidentTimeline record={activeRecord} onUpdateRecord={updateActiveRecord} /><PlaybookPanel record={activeRecord} onUpdateRecord={updateActiveRecord} /></div></>}
+        {!activeRecord ? (
+          <><SocDashboard history={history} /><IncidentForm onSubmit={handleAnalyzeIncident} isLoading={isLoading} /></>
+        ) : (
+          <>
+            <ReportViewer record={activeRecord} onUpdateRecord={updateActiveRecord} onOpenTicketModal={() => setShowTicketModal(true)} onNewIncident={() => setActiveRecord(null)} />
+            <EvidenceInsights record={activeRecord} />
+            <ThreatIntelPanel record={activeRecord} onUpdateRecord={updateActiveRecord} />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6"><IncidentTimeline record={activeRecord} onUpdateRecord={updateActiveRecord} /><PlaybookPanel record={activeRecord} onUpdateRecord={updateActiveRecord} /></div>
+          </>
+        )}
       </main>
       {showHistoryModal && <IncidentHistory history={history} onSelectRecord={(rec) => { setActiveRecord(rec); setShowHistoryModal(false); }} onClearHistory={handleClearHistory} onClose={() => setShowHistoryModal(false)} />}
       {showTicketModal && activeRecord && <TicketModal record={activeRecord} onClose={() => setShowTicketModal(false)} />}
